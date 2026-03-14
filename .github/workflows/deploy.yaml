@@ -17,6 +17,10 @@ jobs:
         run: |
           cd backend
           npm audit --audit-level=high
+      - name: Run tests
+        run: |
+          cd backend
+          npm test
 
       - name: Log in to Azure
         uses: azure/login@v1
