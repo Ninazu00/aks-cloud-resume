@@ -1,0 +1,44 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: |
+          az acr login --name mohamedaymanacr
+
+      - name: Build and push image
+        run: |
+          docker build -t mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }} .
+          docker push mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          cluster-name: resume-aks
+
+      - name: Update deployment image
+        run: |
+          kubectl set image deployment/backend \
+            backend=mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }} \
+            -n resume
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/backend -n resume
