@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Audit dependencies
+        run: |
+          cd backend
+          npm audit --audit-level=high
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd backend
+          npm test
