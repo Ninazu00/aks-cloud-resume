@@ -26,9 +26,21 @@ jobs:
         run: |
           az acr login --name mohamedaymanacr
 
-      - name: Build and push image
+      - name: Build image
         run: |
           docker build -t mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }} .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }}
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Push image
+        run: |
           docker push mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }}
 
       - name: Set AKS context
