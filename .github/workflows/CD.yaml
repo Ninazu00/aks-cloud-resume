@@ -1,30 +1,21 @@
-name: Build and Deploy
+name: CD
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches:
       - main
+    types:
+      - completed
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Audit dependencies
-        run: |
-          cd backend
-          npm audit --audit-level=high
-      - name: Install dependencies
-        run: |
-          cd backend
-          npm ci
-      - name: Run tests
-        run: |
-          cd backend
-          npm test
 
       - name: Log in to Azure
         uses: azure/login@v1
@@ -37,8 +28,8 @@ jobs:
 
       - name: Build and push image
         run: |
-          docker build -t mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }} .
-          docker push mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }}
+          docker build -t mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }} .
+          docker push mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }}
 
       - name: Set AKS context
         uses: azure/aks-set-context@v3
@@ -49,7 +40,7 @@ jobs:
       - name: Update deployment image
         run: |
           kubectl set image deployment/backend \
-            backend=mohamedaymanacr.azurecr.io/resume-backend:${{ github.sha }} \
+            backend=mohamedaymanacr.azurecr.io/resume-backend:${{ github.event.workflow_run.head_sha }} \
             -n resume
 
       - name: Verify rollout
