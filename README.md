@@ -30,6 +30,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 | CI/CD | GitHub Actions |
 | Security Scanning | Trivy (image vulnerability scanning) |
 | Network Security | Kubernetes NetworkPolicies (micro-segmentation) |
+| Secrets Management | Azure Key Vault + Secrets Store CSI Driver |
 
 ---
 
@@ -42,6 +43,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 - **Readiness probes** — traffic only routed to pods that have connected to the database
 - **CI/CD pipeline** — automated build, scan, and deploy on every push to `main`
 - **Network micro-segmentation** — NetworkPolicies enforce least-privilege pod-to-pod communication
+- **Zero-credential secrets** — Azure Key Vault secrets injected at pod startup via the Secrets Store CSI Driver using federated identity — no passwords stored anywhere
 
 ---
 
@@ -51,7 +53,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 
 **Headless Service for PostgreSQL** — uses `clusterIP: None` to give each pod a stable DNS entry (`postgres-0.postgres.resume.svc.cluster.local`), which is the correct pattern for StatefulSets.
 
-**Secrets never committed** — `k8s/secret.yaml` and `.env` are gitignored. The production path forward is Azure Key Vault via the Secrets Store CSI Driver.
+**Secrets managed by Azure Key Vault via Secrets Store CSI Driver** — no credentials are stored in the cluster. The CSI driver authenticates to Key Vault using a managed identity and federated identity credentials (OIDC) — no passwords or client secrets anywhere in the chain. At pod startup the driver fetches secrets from Key Vault and mounts them as an ephemeral volume, which Kubernetes then surfaces as environment variables. The `secret.yaml` file is gitignored and no longer needed for production.
 
 **Network micro-segmentation via NetworkPolicies** — a `deny-all` default policy blocks all pod-to-pod traffic in the `resume` namespace. Explicit allow policies then permit only the necessary paths: ingress controller → backend (ingress), backend → postgres on port 5432 (egress), and backend → kube-dns on UDP 53 for service discovery. This enforces least-privilege at the network layer — a compromised backend pod cannot reach anything beyond postgres.
 
@@ -82,7 +84,8 @@ cloud-aks-resume/
 │   ├── backend-service.yaml
 │   ├── clusterissuer.yaml
 │   ├── ingress.yaml
-│   └── networkpolicy.yaml
+│   ├── networkpolicy.yaml
+│   └── secretproviderclass.yaml
 └── docker-compose.yaml
 ```
 
@@ -142,6 +145,18 @@ kubectl apply -f k8s/
 
 ---
 
+## Secrets Management
+
+Secrets are stored in Azure Key Vault and injected into pods at startup via the Secrets Store CSI Driver — no credentials are stored in the cluster at any point.
+
+**How it works:** The CSI driver runs as a daemonset on every node. When a pod starts, the driver authenticates to Azure Key Vault using a managed identity, fetches the specified secrets, and mounts them into the pod as an ephemeral volume. A `SecretProviderClass` resource defines which vault, which secrets, and which identity to use. The secrets are also surfaced as a Kubernetes Secret object, allowing pods to consume them as standard environment variables.
+
+**Authentication — federated identity (OIDC):** The managed identity never uses a password. Instead, the driver presents a Kubernetes service account token to Azure AD. Azure validates the token against registered federated identity credentials — trust relationships that say "accept tokens from this cluster issuer, for this service account." If the token matches, Azure issues an access token. No secret ever exists in the chain.
+
+**`SecretProviderClass`** (`k8s/secretproviderclass.yaml`) — references the Key Vault name, managed identity client ID, tenant ID, and the list of secrets to fetch. Also defines a `secretObjects` block that maps Key Vault secret names to Kubernetes Secret keys, keeping the pod's env var references unchanged.
+
+---
+
 ## Network Security
 
 Three NetworkPolicies enforce micro-segmentation across the `resume` namespace:
@@ -183,7 +198,8 @@ The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is e
 
 ## Security
 
-- Credentials in Kubernetes Secrets, gitignored, never hardcoded
+- Secrets sourced from Azure Key Vault via Secrets Store CSI Driver — never stored in the cluster
+- Federated identity (OIDC) for Key Vault authentication — no client secrets or passwords
 - Non-root container (`USER node` in Dockerfile)
 - `npm ci` for deterministic, locked dependency installs
 - `npm audit` blocks CI on high/critical dependency vulnerabilities
@@ -197,6 +213,6 @@ The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is e
 ## Roadmap
 
 - [x] GitHub Actions CI/CD with security scanning (Trivy)
-- [ ] Azure Key Vault via Secrets Store CSI Driver
+- [x] Azure Key Vault via Secrets Store CSI Driver
 - [x] Kubernetes NetworkPolicies
 - [x] Ingress-level rate limiting as a defence-in-depth layer
