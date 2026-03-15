@@ -1,6 +1,6 @@
 # Cloud Resume — AKS Deployment
 
-A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Live at [mohamedayman.work](https://mohamedayman.work).
+A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Previously live at [mohamedayman.work](https://mohamedayman.work).
 
 ---
 
