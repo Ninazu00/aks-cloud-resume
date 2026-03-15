@@ -31,6 +31,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 | Security Scanning | Trivy (image vulnerability scanning) |
 | Network Security | Kubernetes NetworkPolicies (micro-segmentation) |
 | Secrets Management | Azure Key Vault + Secrets Store CSI Driver |
+| Observability | Prometheus + Grafana (kube-prometheus-stack) |
 
 ---
 
@@ -44,6 +45,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 - **CI/CD pipeline** — automated build, scan, and deploy on every push to `main`
 - **Network micro-segmentation** — NetworkPolicies enforce least-privilege pod-to-pod communication
 - **Zero-credential secrets** — Azure Key Vault secrets injected at pod startup via the Secrets Store CSI Driver using federated identity — no passwords stored anywhere
+- **Observability stack** — Prometheus scrapes metrics cluster-wide; Grafana exposes pre-built Kubernetes dashboards at [grafana.k8.mohamedayman.work](https://grafana.k8.mohamedayman.work)
 
 ---
 
@@ -85,7 +87,8 @@ cloud-aks-resume/
 │   ├── clusterissuer.yaml
 │   ├── ingress.yaml
 │   ├── networkpolicy.yaml
-│   └── secretproviderclass.yaml
+│   ├── secretproviderclass.yaml
+│   └── monitoring-values.yaml  # Helm values for kube-prometheus-stack
 └── docker-compose.yaml
 ```
 
@@ -175,6 +178,38 @@ The result: a compromised backend pod can reach postgres and nothing else. A com
 
 ---
 
+## Observability
+
+The monitoring stack is deployed via the `kube-prometheus-stack` Helm chart into a dedicated `monitoring` namespace, keeping it cleanly separated from application workloads.
+
+**Components:**
+
+- **Prometheus** — scrapes metrics from all pods, nodes, and Kubernetes components on a continuous schedule. Configured with a 7-day retention window and a 1Gi persistent volume so metrics survive pod restarts.
+- **kube-state-metrics** — exposes Kubernetes object state as metrics (deployment replica counts, pod phases, resource requests/limits). This is what powers the "is my deployment healthy?" dashboards.
+- **node-exporter** — runs as a DaemonSet (one pod per node) and exposes OS-level metrics: CPU, memory, disk I/O, and network throughput.
+- **Grafana** — visualises all of the above via pre-built Kubernetes dashboards. Accessible at [grafana.k8.mohamedayman.work](https://grafana.k8.mohamedayman.work) with TLS provisioned automatically by cert-manager.
+
+**Deployment:**
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+kubectl create namespace monitoring
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --values k8s/monitoring-values.yaml \
+  --set grafana.adminPassword="<your-password>"
+```
+
+The `adminPassword` is intentionally excluded from `monitoring-values.yaml` and passed at install time via `--set` so no credentials are committed to the repository.
+
+**Grafana ingress** is configured identically to the main site — NGINX ingress class, TLS via `letsencrypt-prod`, and an SSL redirect. cert-manager issues the certificate automatically once the DNS A record for `grafana.k8.mohamedayman.work` is in place.
+
+**Alertmanager is disabled** — alert routing (PagerDuty, Slack, email) is out of scope for this project and would add resource overhead without benefit.
+
+---
+
 ## CI/CD Pipeline
 
 Two GitHub Actions workflows handle the full delivery lifecycle:
@@ -216,3 +251,4 @@ The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is e
 - [x] Azure Key Vault via Secrets Store CSI Driver
 - [x] Kubernetes NetworkPolicies
 - [x] Ingress-level rate limiting as a defence-in-depth layer
+- [x] Prometheus + Grafana observability stack (kube-prometheus-stack)
