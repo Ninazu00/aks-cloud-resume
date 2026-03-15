@@ -1,6 +1,6 @@
 # Cloud Resume — AKS Deployment
 
-A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Previously live at [mohamedayman.work](https://mohamedayman.work).
+A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Live at [mohamedayman.work](https://mohamedayman.work).
 
 ---
 
@@ -27,6 +27,8 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 | Ingress | NGINX Ingress Controller |
 | TLS | cert-manager + Let's Encrypt |
 | Registry | Azure Container Registry |
+| CI/CD | GitHub Actions |
+| Security Scanning | Trivy (image vulnerability scanning) |
 
 ---
 
@@ -37,6 +39,7 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 - **HTTPS** — TLS automatically provisioned and renewed by cert-manager
 - **3 backend replicas** — load balanced behind the NGINX ingress
 - **Readiness probes** — traffic only routed to pods that have connected to the database
+- **CI/CD pipeline** — automated build, scan, and deploy on every push to `main`
 
 ---
 
@@ -134,11 +137,34 @@ kubectl apply -f k8s/
 
 ---
 
+## CI/CD Pipeline
+
+Two GitHub Actions workflows handle the full delivery lifecycle:
+
+**CI** (`.github/workflows/ci.yaml`) — runs on every push to any branch:
+- `npm audit` — fails on high/critical dependency vulnerabilities
+- `npm ci` — deterministic dependency install
+- `npm test` — runs the test suite
+
+**CD** (`.github/workflows/cd.yaml`) — triggers on successful CI run against `main`:
+1. Logs into Azure via stored credentials and authenticates to ACR
+2. Builds the Docker image tagged with the commit SHA
+3. **Trivy scan** — scans the image for HIGH/CRITICAL CVEs; blocks the push if any unfixed vulnerabilities are found
+4. Pushes the image to ACR
+5. Sets AKS context and updates the `backend` deployment with the new image tag
+6. Verifies the rollout completes successfully
+
+The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is ever pushed to the registry or deployed to the cluster.
+
+---
+
 ## Security
 
 - Credentials in Kubernetes Secrets, gitignored, never hardcoded
 - Non-root container (`USER node` in Dockerfile)
 - `npm ci` for deterministic, locked dependency installs
+- `npm audit` blocks CI on high/critical dependency vulnerabilities
+- Trivy image scan blocks deployment on HIGH/CRITICAL CVEs (unfixed only)
 - Rate limiting on write endpoint
 - HTTP → HTTPS redirect enforced at ingress
 
@@ -146,7 +172,7 @@ kubectl apply -f k8s/
 
 ## Roadmap
 
-- [ ] GitHub Actions CI/CD with OIDC (no stored credentials)
+- [x] GitHub Actions CI/CD with security scanning (Trivy)
 - [ ] Azure Key Vault via Secrets Store CSI Driver
 - [ ] Kubernetes NetworkPolicies
 - [ ] Ingress-level rate limiting as a defence-in-depth layer
