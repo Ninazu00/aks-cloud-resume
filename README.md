@@ -1,6 +1,6 @@
 # Cloud Resume — AKS Deployment
 
-A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Liive at [k8.mohamedayman.work](https://k8.mohamedayman.work/) during testing.
+A full-stack resume site deployed on Azure Kubernetes Service, built as a cloud/cloud security portfolio project. Live at [mohamedayman.work](https://mohamedayman.work).
 
 ---
 
@@ -29,17 +29,19 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 | Registry | Azure Container Registry |
 | CI/CD | GitHub Actions |
 | Security Scanning | Trivy (image vulnerability scanning) |
+| Network Security | Kubernetes NetworkPolicies (micro-segmentation) |
 
 ---
 
 ## Features
 
 - **Visitor counter** — records each visit to PostgreSQL and displays a live count
-- **Rate limiting** — per-IP rate limiting on `/api/visit` via `express-rate-limit`
+- **Rate limiting** — per-IP rate limiting on `/api/visit` via `express-rate-limit` (application layer) and NGINX ingress annotations (network layer)
 - **HTTPS** — TLS automatically provisioned and renewed by cert-manager
 - **3 backend replicas** — load balanced behind the NGINX ingress
 - **Readiness probes** — traffic only routed to pods that have connected to the database
 - **CI/CD pipeline** — automated build, scan, and deploy on every push to `main`
+- **Network micro-segmentation** — NetworkPolicies enforce least-privilege pod-to-pod communication
 
 ---
 
@@ -51,7 +53,9 @@ Internet → Azure Load Balancer → NGINX Ingress (TLS) → Backend Service (Cl
 
 **Secrets never committed** — `k8s/secret.yaml` and `.env` are gitignored. The production path forward is Azure Key Vault via the Secrets Store CSI Driver.
 
-**ConfigMap generated from source** — the postgres init ConfigMap is generated directly from `db/init.sql` via `kubectl create configmap --from-file`, keeping the SQL file as the single source of truth.
+**Network micro-segmentation via NetworkPolicies** — a `deny-all` default policy blocks all pod-to-pod traffic in the `resume` namespace. Explicit allow policies then permit only the necessary paths: ingress controller → backend (ingress), backend → postgres on port 5432 (egress), and backend → kube-dns on UDP 53 for service discovery. This enforces least-privilege at the network layer — a compromised backend pod cannot reach anything beyond postgres.
+
+**Ingress-level rate limiting as defence-in-depth** — NGINX ingress annotations rate limit `/api` endpoints (5 req/s, burst of 15) independently of the application-layer `express-rate-limit`. Static assets are intentionally excluded to avoid blocking legitimate page loads. Two independent rate limiting layers mean the API is protected even if one layer is bypassed or fails.
 
 ---
 
@@ -77,7 +81,8 @@ cloud-aks-resume/
 │   ├── backend-deployment.yaml
 │   ├── backend-service.yaml
 │   ├── clusterissuer.yaml
-│   └── ingress.yaml
+│   ├── ingress.yaml
+│   └── networkpolicy.yaml
 └── docker-compose.yaml
 ```
 
@@ -137,6 +142,24 @@ kubectl apply -f k8s/
 
 ---
 
+## Network Security
+
+Three NetworkPolicies enforce micro-segmentation across the `resume` namespace:
+
+**`deny-all`** — selects all pods with an empty `podSelector: {}` and declares both `Ingress` and `Egress` policy types with no rules. This is the default-deny baseline — nothing is permitted unless an explicit allow policy exists.
+
+**`allow-backend`** — applied to `app: backend` pods:
+- Ingress: permits traffic from the `ingress-nginx` namespace only (the NGINX ingress controller)
+- Egress: permits TCP 5432 to `app: postgres` pods, and UDP 53 to `kube-system` for DNS resolution
+
+**`allow-postgres`** — applied to `app: postgres` pods:
+- Ingress: permits TCP 5432 from `app: backend` pods only
+- No egress policy declared — response traffic is automatically permitted as it is stateful (connection tracking handles replies)
+
+The result: a compromised backend pod can reach postgres and nothing else. A compromised postgres pod cannot initiate any connections at all.
+
+---
+
 ## CI/CD Pipeline
 
 Two GitHub Actions workflows handle the full delivery lifecycle:
@@ -165,7 +188,8 @@ The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is e
 - `npm ci` for deterministic, locked dependency installs
 - `npm audit` blocks CI on high/critical dependency vulnerabilities
 - Trivy image scan blocks deployment on HIGH/CRITICAL CVEs (unfixed only)
-- Rate limiting on write endpoint
+- Rate limiting on `/api` at both application layer (`express-rate-limit`) and network layer (NGINX ingress annotations)
+- NetworkPolicies enforce default-deny with least-privilege allow rules per pod
 - HTTP → HTTPS redirect enforced at ingress
 
 ---
@@ -174,5 +198,5 @@ The Trivy gate ensures no image with known HIGH or CRITICAL vulnerabilities is e
 
 - [x] GitHub Actions CI/CD with security scanning (Trivy)
 - [ ] Azure Key Vault via Secrets Store CSI Driver
-- [ ] Kubernetes NetworkPolicies
-- [ ] Ingress-level rate limiting as a defence-in-depth layer
+- [x] Kubernetes NetworkPolicies
+- [x] Ingress-level rate limiting as a defence-in-depth layer
