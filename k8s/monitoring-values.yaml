@@ -1,0 +1,29 @@
+grafana:
+  adminPassword: "changeme"
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    hosts:
+      - grafana.k8.mohamedayman.work
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.k8.mohamedayman.work
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+
+alertmanager:
+  enabled: false
