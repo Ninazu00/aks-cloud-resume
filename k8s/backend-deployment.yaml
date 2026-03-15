@@ -27,11 +27,22 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
+                  name: postgres-secret    # same secret name — now populated by CSI driver
                   key: DATABASE_URL
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets"    # CSI driver needs a mount point to write secrets to
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /api/visits
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: azure-keyvault-secrets  # references our SecretProviderClass
